@@ -1,5 +1,3 @@
-#include <SDL2/SDL_timer.h>
-#include <SDL2/SDL_video.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <SDL2/SDL.h>
@@ -17,6 +15,9 @@
 
 int window_width, window_height;
 int input[256];
+bool paused = false;
+bool pause_release = false;
+unsigned int length = INIT_LENGTH;
 
 typedef enum {
     UP,
@@ -100,6 +101,7 @@ void draw_snake(SDL_Renderer *renderer, Snake snake)
         get_window_offset(&offset_x, &offset_y);
         SDL_Rect cell_square = {.w=CELL_SIZE,.h=CELL_SIZE,.x=offset_x+(current->x)*CELL_SIZE,.y=offset_y+(current->y)*CELL_SIZE};
         SDL_RenderFillRect(renderer, &cell_square);
+        SDL_SetRenderDrawColor(renderer, 0x00, 0x99, 0x00, 0xFF);
         current = current->next;
     }
 }
@@ -113,7 +115,17 @@ void draw_apple(SDL_Renderer *renderer, Apple apple)
     SDL_RenderFillRect(renderer, &cell_square);
 }
 
-void move_snake(Snake *snake) {
+void append_snake(Snake *snake) 
+{
+    Cell *new = malloc(sizeof(Cell));
+    *new = *(snake->tail);
+    snake->tail->next = new;
+    new->prev = snake->tail;
+    snake->tail=new;
+    ++length;
+}
+
+int move_snake(Snake *snake) {
     Cell* new_tail = snake->tail->prev;
     Cell* new_head = snake->tail;
     new_tail->next = NULL;
@@ -139,6 +151,26 @@ void move_snake(Snake *snake) {
             snake->head->y = snake->head->next->y;
         break;
     }
+    if (snake->head->x >= GRID_SIZE)
+        return 1;
+    if (snake->head->y >= GRID_SIZE)
+        return 1;
+    return 0;
+}
+
+bool snake_collide_with(Snake snake, size_t x, size_t y) 
+{
+    unsigned int x_snake = snake.head->x;
+    unsigned int y_snake = snake.head->y;
+    return x==x_snake && y_snake==y;
+}
+
+bool snake_hit_itself(Snake snake) 
+{
+    for(Cell *current = snake.head; (current = current->next);) {
+        if(snake_collide_with(snake, current->x, current->y)) return true;
+    }
+    return false;
 }
 
 void handle_key_press(Snake *snake) 
@@ -155,6 +187,10 @@ void handle_key_press(Snake *snake)
     } else if (input[SDL_SCANCODE_LEFT] && snake->prev_dir != RIGHT) {
         snake->dir = LEFT;
         input[SDL_SCANCODE_LEFT] = false;
+    } else if (pause_release && input[SDL_SCANCODE_P]) {
+        pause_release = false;
+        paused = !paused;
+        input[SDL_SCANCODE_P] = false;
     }
 }
 
@@ -191,10 +227,17 @@ int main()
 
     bool stay_open = true;
     clock_t current_tick = clock();
+    SDL_Rect game_frame;
     while(stay_open) {
         SDL_Event e;
-        SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
+        game_frame.h = CELL_SIZE*GRID_SIZE;
+        game_frame.w = CELL_SIZE*GRID_SIZE;
+        game_frame.x = (window_width-(CELL_SIZE*GRID_SIZE))/2;
+        game_frame.y = (window_height-(CELL_SIZE*GRID_SIZE))/2;
+        SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xFF);
         SDL_RenderClear(renderer);
+        SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
+        SDL_RenderFillRect(renderer, &game_frame);
         SDL_GetWindowSize(window, &window_width, &window_height);
         draw_snake(renderer, snake);
         draw_apple(renderer,apple);
@@ -211,10 +254,18 @@ int main()
                 break;
             }
         }
+
+        if(!input[SDL_SCANCODE_P]) pause_release = true;
+
         SDL_RenderPresent(renderer);
         clock_t current_time = clock();
-        if(delta_time(current_time,current_tick) > 0.1) {
-            move_snake(&snake);
+        if(!paused && delta_time(current_time,current_tick) > 0.02+0.1*(1-(length/(double)(GRID_SIZE*GRID_SIZE)))) {
+            if(move_snake(&snake)) stay_open = false;
+            if(snake_hit_itself(snake)) stay_open = false;
+            if(snake_collide_with(snake, apple.x, apple.y)) {
+                append_snake(&snake);
+                apple=generate_apple(snake);
+            }
             current_tick = current_time;
             snake.prev_dir = snake.dir;
         }
